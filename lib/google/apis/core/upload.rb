@@ -181,7 +181,7 @@ module Google
           apply_request_options(request_header)
           request_header[UPLOAD_PROTOCOL_HEADER] = RESUMABLE
           request_header[UPLOAD_COMMAND_HEADER] = START_COMMAND
-          request_header[UPLOAD_CONTENT_LENGTH] = upload_io.size.to_s
+          # request_header[UPLOAD_CONTENT_LENGTH] = upload_io.size.to_s
           request_header[UPLOAD_CONTENT_TYPE_HEADER] = upload_content_type
 
           client.request(method.to_s.upcase,
@@ -220,16 +220,39 @@ module Google
           logger.debug { sprintf('Sending upload command to %s', @upload_url) }
 
           content = upload_io
-          content.pos = @offset
+          # @chunk to handle retry with @offset
+          chunk = content.read(256*1024) # Optimal chunk size per frankyn is 1024*1024*10 (10 MB)
+          # verify that you got it all, maybe chunk == @chunk_size or content.eof?
+
+          # chunk.pos = @offset
+
+          request_header = header.dup
+          apply_request_options(request_header)
+          request_header[UPLOAD_COMMAND_HEADER] = QUERY_COMMAND # delete this unused line?
+          request_header[UPLOAD_COMMAND_HEADER] = "upload"
+          request_header[UPLOAD_OFFSET_HEADER] = @offset.to_s
+          request_header[CONTENT_TYPE_HEADER] = upload_content_type
+
+          status = client.post(@upload_url, body: chunk, header: request_header, follow_redirect: true)
+          logger.debug "status post 1: #{status.inspect}"
+          @offset += 256*1024
+ 
+          # @chunk to handle retry with @offset
+          # verify that you got it all, maybe chunk == @chunk_size or content.eof?
+          chunk = content.read(256*1024)
+
+          # chunk.pos = @offset
 
           request_header = header.dup
           apply_request_options(request_header)
           request_header[UPLOAD_COMMAND_HEADER] = QUERY_COMMAND
-          request_header[UPLOAD_COMMAND_HEADER] = UPLOAD_COMMAND
+          request_header[UPLOAD_COMMAND_HEADER] = UPLOAD_COMMAND # set this value when done, contains 'finalize'
           request_header[UPLOAD_OFFSET_HEADER] = @offset.to_s
           request_header[CONTENT_TYPE_HEADER] = upload_content_type
 
-          client.post(@upload_url, body: content, header: request_header, follow_redirect: true)
+          status = client.post(@upload_url, body: chunk, header: request_header, follow_redirect: true)
+          logger.debug "status post 2: #{status.inspect}"
+          status
         end
 
         # Execute the upload request once. This will typically perform two HTTP requests -- one to initiate or query
